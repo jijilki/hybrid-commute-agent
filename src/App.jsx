@@ -258,12 +258,17 @@ const QUICK_ACTIONS = [
   { label:"Optimal departure times",   prompt:"What is the optimal departure time for each day of the week given traffic and weather?" },
   { label:"Time savings summary",      prompt:"How much time can I save by choosing the best vs worst commute days, factoring in weather?" },
 ];
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => ({
+  value: String(i),
+  label: i === 0 ? "12:00 AM" : i < 12 ? `${i}:00 AM` : i === 12 ? "12:00 PM" : `${i - 12}:00 PM`,
+}));
+
 const SETUP_FIELDS = [
-  { field:"originRaw",    label:"Home address",                         placeholder:"123 Main St, Austin TX" },
-  { field:"destRaw",      label:"Office address",                       placeholder:"456 Congress Ave, Austin TX" },
-  { field:"officeDays",   label:"Required office days per week",        placeholder:"3",  type:"number" },
-  { field:"windowStart",  label:"Morning departure hour (24h)",         placeholder:"8",  type:"number" },
-  { field:"returnHour",   label:"Evening return hour (24h)",            placeholder:"17", type:"number" },
+  { field:"originRaw",   label:"Home address",              placeholder:"123 Main St, Austin TX" },
+  { field:"destRaw",     label:"Office address",            placeholder:"456 Congress Ave, Austin TX" },
+  { field:"officeDays",  label:"Required office days/week", placeholder:"3", type:"number" },
+  { field:"windowStart", label:"Morning departure time",    type:"select", options: HOUR_OPTIONS },
+  { field:"returnHour",  label:"Evening return time",       type:"select", options: HOUR_OPTIONS },
 ];
 
 // ─── App ───────────────────────────────────────────────────────────────────
@@ -511,7 +516,8 @@ export default function App() {
 
   // ── Data tab ──────────────────────────────────────────────────────────
   const DataTab = () => {
-    const days = ["Mon","Tue","Wed","Thu","Fri"];
+    const days = ["Mon","Tue","Wed","Thu","Fri"]
+      .sort((a, b) => (nextDateForDay(a) || "").localeCompare(nextDateForDay(b) || ""));
     const weatherAge = weather?._fetched
       ? Math.round((Date.now() - weather._fetched) / 60000)
       : null;
@@ -744,7 +750,7 @@ export default function App() {
         <div style={{background:"var(--color-background-secondary)",borderRadius:8,border:"0.5px solid var(--color-border-tertiary)",padding:"10px 14px",marginBottom:12,fontSize:12,color:"var(--color-text-secondary)"}}>
           <div>📍 {profile.originName}</div>
           <div>🏢 {profile.destName}</div>
-          <div>{profile.officeDays} days/wk · 🌅 {profile.windowStart}:00 depart · 🌆 {profile.returnHour || "17"}:00 return</div>
+          <div>{profile.officeDays} days/wk · 🌅 {HOUR_OPTIONS[parseInt(profile.windowStart)]?.label || `${profile.windowStart}:00`} depart · 🌆 {HOUR_OPTIONS[parseInt(profile.returnHour || 17)]?.label || `${profile.returnHour}:00`} return</div>
           {profile.countryCode && <div>🌍 Country: {profile.countryCode} {HOLIDAY_CALENDARS[profile.countryCode] ? "✅" : "⚠️ (using US holidays as fallback)"}</div>}
         </div>
       )}
@@ -753,13 +759,24 @@ export default function App() {
         {SETUP_FIELDS.map((f,i) => (
           <div key={i}>
             <label style={{fontSize:12,color:"var(--color-text-secondary)",display:"block",marginBottom:3}}>{f.label}</label>
-            <input
-              type={f.type||"text"}
-              value={setupData[f.field]||""}
-              onChange={e => setSetupData(p=>({...p,[f.field]:e.target.value}))}
-              placeholder={f.placeholder}
-              style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",fontSize:13,boxSizing:"border-box",outline:"none"}}
-            />
+            {f.type === "select" ? (
+              <select
+                value={setupData[f.field] ?? profile?.[f.field] ?? ""}
+                onChange={e => setSetupData(p => ({...p, [f.field]: e.target.value}))}
+                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",fontSize:13,boxSizing:"border-box",outline:"none",cursor:"pointer",appearance:"auto"}}
+              >
+                <option value="" disabled>Select time…</option>
+                {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            ) : (
+              <input
+                type={f.type || "text"}
+                value={setupData[f.field] || ""}
+                onChange={e => setSetupData(p => ({...p, [f.field]: e.target.value}))}
+                placeholder={f.placeholder}
+                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",fontSize:13,boxSizing:"border-box",outline:"none"}}
+              />
+            )}
           </div>
         ))}
       </div>

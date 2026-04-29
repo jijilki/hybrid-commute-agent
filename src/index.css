@@ -1,0 +1,71 @@
+:root {
+  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Consolas, 'Courier New', monospace;
+
+  /* ── Color tokens used by App.jsx ── */
+  --color-background-primary:   #080c14;
+  --color-background-secondary: #0f1522;
+  --color-background-info:      rgba(99, 102, 241, 0.13);
+  --color-text-primary:         #dde3f0;
+  --color-text-secondary:       #6b7799;
+  --color-text-tertiary:        #38445e;
+  --color-border-primary:       #5b6ef5;
+  --color-border-secondary:     #1c2540;
+  --color-border-tertiary:      #131a2e;
+
+  /* ── Accent ── */
+  --accent:        #6366f1;
+  --accent-glow:   rgba(99, 102, 241, 0.25);
+
+  font: 15px/1.5 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #05080f;
+  color: var(--color-text-primary);
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-background-primary);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-secondary); border-radius: 4px; }
+
+/* ── Animations ── */
+@keyframes pulse {
+  0%, 100% { opacity: .25; transform: scale(.75); }
+  50%       { opacity: 1;   transform: scale(1);   }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ── Focus ── */
+textarea:focus,
+input:focus {
+  outline: none;
+  border-color: var(--color-border-primary) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ── Button press ── */
+button:active { transform: scale(.97); }

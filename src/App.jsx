@@ -728,7 +728,7 @@ export default function App() {
   };
 
   // ── Settings tab ──────────────────────────────────────────────────────
-  const SettingsTab = () => (
+  const settingsTabContent = (
     <div style={{padding:"16px 20px",overflowY:"auto",flex:1}}>
       <div style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:8,padding:"12px 14px",marginBottom:18,fontSize:12,color:"var(--color-text-secondary)",lineHeight:1.7}}>
         <div style={{fontWeight:500,color:"var(--color-text-primary)",marginBottom:4}}>Required Google Cloud APIs</div>
@@ -920,7 +920,7 @@ export default function App() {
       )}
 
       {tab === "Data" && <DataTab/>}
-      {tab === "Settings" && <SettingsTab/>}
+      {tab === "Settings" && settingsTabContent}
 
     </div>
   );

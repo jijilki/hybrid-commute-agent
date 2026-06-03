@@ -64,6 +64,7 @@ textarea:focus,
 input:focus {
   outline: none;
   border-color: var(--color-border-primary) !important;
+  border-width: 2px !important;
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 

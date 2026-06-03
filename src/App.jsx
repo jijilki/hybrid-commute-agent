@@ -312,12 +312,15 @@ export default function App() {
     const readingCount = countReadings(history);
     const hasWeather   = !!weather?.daily;
     const holCount     = holidays.length;
-    setMessages([{
-      role: "assistant",
-      content: profile
-        ? `👋 Welcome back!\n\n📍 **${profile.originName}** → 🏢 **${profile.destName}**\n📊 **${readingCount} traffic readings** · ${hasWeather ? "✅ weather loaded" : "⚠️ no weather yet"} · ${holCount} upcoming holidays\n\nAsk me for recommendations, or go to **Data** to refresh traffic, weather & holidays!`
-        : `👋 **Welcome to HybridCommute!**\n\nI combine real Google Maps traffic, live weather forecasts, and public holiday data to find your optimal office days.\n\n**Getting started:**\n1. Go to **Settings** → enter your commute addresses\n2. Go to **Data** → click "Collect data now"\n3. Come back here and ask me for recommendations!\n\nThe more data collected over time, the smarter my recommendations become.`
-    }]);
+    let msg;
+    if (!profile) {
+      msg = { role:"assistant", content:`👋 **Welcome to HybridCommute!**\n\nI combine real Google Maps traffic, live weather forecasts, and public holiday data to find your optimal office days.\n\n**Getting started:**\n1. Go to **Settings** → enter your commute addresses\n2. Come back here — I'll collect your data automatically!\n\nThe more data collected over time, the smarter my recommendations become.` };
+    } else if (readingCount === 0) {
+      msg = { role:"assistant", type:"collect-prompt" };
+    } else {
+      msg = { role:"assistant", content:`👋 Welcome back!\n\n📍 **${profile.originName}** → 🏢 **${profile.destName}**\n📊 **${readingCount} traffic readings** · ${hasWeather ? "✅ weather loaded" : "⚠️ no weather yet"} · ${holCount} upcoming holidays\n\nAsk me for recommendations, or go to **Data** to refresh traffic, weather & holidays!` };
+    }
+    setMessages([msg]);
   }, [profile?.originName]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, aiLoading]);
@@ -328,19 +331,16 @@ export default function App() {
   const saveHolidays = async (d) => { setHolidays(d); try { localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(d)); } catch(e) {} };
 
   // ── Collect traffic + weather + holidays ──────────────────────────────
-  const collectNow = async () => {
-    if (!GOOGLE_API_KEY) { setCollectLog(["⚠️ No Google API key configured."]); return; }
-    setCollecting(true);
-    setCollectLog(["🔄 Loading Google Maps SDK…"]);
+  const runCollection = async (append, updateLast) => {
+    if (!GOOGLE_API_KEY) { append("⚠️ No Google API key configured."); return; }
     let mapsApi;
     try {
       mapsApi = await loadMapsSDK(GOOGLE_API_KEY);
-      setCollectLog(l => [...l, "✅ SDK loaded. Starting traffic collection for Mon–Fri…"]);
+      append("✅ SDK loaded. Starting traffic collection for Mon–Fri…");
     } catch(e) {
-      setCollectLog(["❌ " + e.message]); setCollecting(false); return;
+      append("❌ " + e.message); return;
     }
 
-    // Traffic data — departure (home→office) + return (office→home) only
     const morningSlot = `↑ ${profile.windowStart || "8"}:00`;
     const eveningSlot = `↓ ${profile.returnHour  || "17"}:00`;
     const workdays    = [1,2,3,4,5];
@@ -351,59 +351,89 @@ export default function App() {
       const dayName = SHORT_DAYS[day];
       if (!newHistory[dayName]) newHistory[dayName] = {};
 
-      // Morning: home → office
       if (!newHistory[dayName][morningSlot]) newHistory[dayName][morningSlot] = [];
-      setCollectLog(l => [...l, `📡 ${dayName} morning (${morningSlot})…`]);
+      append(`📡 ${dayName} morning (${morningSlot})…`);
       try {
         const depTime = nextOccurrence(day, `${profile.windowStart || "8"}:00`);
         const result  = await getRouteDuration(mapsApi, profile.originCoords, profile.destCoords, depTime);
         newHistory[dayName][morningSlot].push(result.minutes);
         collected++;
-        setCollectLog(l => { const n=[...l]; n[n.length-1]=`✅ ${dayName} morning: ${result.minutes} min`; return n; });
+        updateLast(`✅ ${dayName} morning: ${result.minutes} min`);
       } catch(e) {
-        setCollectLog(l => { const n=[...l]; n[n.length-1]=`❌ ${dayName} morning: ${e.message}`; return n; });
+        updateLast(`❌ ${dayName} morning: ${e.message}`);
       }
       await new Promise(r => setTimeout(r, 200));
 
-      // Evening: office → home (origin/dest swapped)
       if (!newHistory[dayName][eveningSlot]) newHistory[dayName][eveningSlot] = [];
-      setCollectLog(l => [...l, `📡 ${dayName} evening (${eveningSlot})…`]);
+      append(`📡 ${dayName} evening (${eveningSlot})…`);
       try {
         const retTime = nextOccurrence(day, `${profile.returnHour || "17"}:00`);
         const result  = await getRouteDuration(mapsApi, profile.destCoords, profile.originCoords, retTime);
         newHistory[dayName][eveningSlot].push(result.minutes);
         collected++;
-        setCollectLog(l => { const n=[...l]; n[n.length-1]=`✅ ${dayName} evening: ${result.minutes} min`; return n; });
+        updateLast(`✅ ${dayName} evening: ${result.minutes} min`);
       } catch(e) {
-        setCollectLog(l => { const n=[...l]; n[n.length-1]=`❌ ${dayName} evening: ${e.message}`; return n; });
+        updateLast(`❌ ${dayName} evening: ${e.message}`);
       }
       await new Promise(r => setTimeout(r, 200));
     }
     await saveHistory(newHistory);
-    setCollectLog(l => [...l, `✅ Traffic done: +${collected} readings (${countReadings(newHistory)} total)`]);
+    append(`✅ Traffic done: +${collected} readings (${countReadings(newHistory)} total)`);
 
-    // Weather
     try {
-      setCollectLog(l => [...l, "🌤️ Fetching 7-day weather forecast (Open-Meteo)…"]);
+      append("🌤️ Fetching 7-day weather forecast (Open-Meteo)…");
       const wx = await fetchWeatherForecast(profile.originCoords.lat, profile.originCoords.lng);
       await saveWeather(wx);
-      setCollectLog(l => [...l, `✅ Weather: 7-day forecast loaded`]);
+      updateLast(`✅ Weather: 7-day forecast loaded`);
     } catch(e) {
-      setCollectLog(l => [...l, `⚠️ Weather: ${e.message}`]);
+      updateLast(`⚠️ Weather: ${e.message}`);
     }
 
-    // Holidays
     try {
       const cc = profile.countryCode || "US";
-      setCollectLog(l => [...l, `📅 Fetching public holidays for ${cc} (Google Calendar)…`]);
+      append(`📅 Fetching public holidays for ${cc} (Google Calendar)…`);
       const hols = await fetchHolidays(GOOGLE_API_KEY, cc);
       await saveHolidays(hols);
-      setCollectLog(l => [...l, `✅ Holidays: ${hols.length} upcoming events found`]);
+      updateLast(`✅ Holidays: ${hols.length} upcoming events found`);
     } catch(e) {
-      setCollectLog(l => [...l, `⚠️ Holidays: ${e.message}`]);
+      updateLast(`⚠️ Holidays: ${e.message}`);
     }
 
+    return collected;
+  };
+
+  const collectNow = async () => {
+    if (!GOOGLE_API_KEY) { setCollectLog(["⚠️ No Google API key configured."]); return; }
+    setCollecting(true);
+    setCollectLog(["🔄 Loading Google Maps SDK…"]);
+    await runCollection(
+      line => setCollectLog(l => [...l, line]),
+      line => setCollectLog(l => { const n=[...l]; n[n.length-1]=line; return n; })
+    );
     setCollectLog(l => [...l, `\n🎉 All done! Go to Chat for recommendations.`]);
+    setCollecting(false);
+  };
+
+  const collectNowFromChat = async () => {
+    if (!profile) return;
+    setCollecting(true);
+    setMessages(msgs => msgs.map(m =>
+      m.type === "collect-prompt"
+        ? { role:"assistant", type:"collect-progress", log:["🔄 Loading Google Maps SDK…"] }
+        : m
+    ));
+    const appendChat   = line => setMessages(msgs => msgs.map(m =>
+      m.type === "collect-progress" ? { ...m, log:[...m.log, line] } : m
+    ));
+    const updateLastChat = line => setMessages(msgs => msgs.map(m =>
+      m.type === "collect-progress" ? { ...m, log:[...m.log.slice(0,-1), line] } : m
+    ));
+    const collected = await runCollection(appendChat, updateLastChat);
+    setMessages(msgs => msgs.map(m =>
+      m.type === "collect-progress"
+        ? { role:"assistant", type:null, content:`🎉 **All done!** Collected ${collected ?? 0} traffic readings plus weather & holidays.\n\nAsk me for commute recommendations whenever you're ready!` }
+        : m
+    ));
     setCollecting(false);
   };
 
@@ -870,7 +900,25 @@ export default function App() {
                     ? "1px solid rgba(99,102,241,0.3)"
                     : "1px solid var(--color-border-secondary)",
                 }}>
-                  {msg.role==="assistant" ? renderMd(msg.content) : <p style={{margin:0,fontSize:13,color:"var(--color-text-primary)",lineHeight:1.65}}>{msg.content}</p>}
+                  {msg.type==="collect-prompt" ? (
+                    <div>
+                      <p style={{margin:"0 0 10px",fontSize:13,color:"var(--color-text-primary)",lineHeight:1.65}}>
+                        📊 No traffic data yet for <strong>{profile?.originName}</strong> → <strong>{profile?.destName}</strong>.<br/>
+                        Collect traffic, weather &amp; holidays to get recommendations.
+                      </p>
+                      <button
+                        onClick={collectNowFromChat}
+                        disabled={collecting}
+                        style={{fontSize:12,padding:"7px 16px",borderRadius:8,border:"none",background:collecting?"var(--color-background-secondary)":"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",cursor:collecting?"default":"pointer",fontWeight:600,boxShadow:collecting?"none":"0 0 10px rgba(99,102,241,0.35)"}}
+                      >
+                        {collecting ? "Collecting…" : "Collect data now"}
+                      </button>
+                    </div>
+                  ) : msg.type==="collect-progress" ? (
+                    <div style={{fontFamily:"var(--font-mono)",fontSize:11,color:"var(--color-text-secondary)",lineHeight:1.8}}>
+                      {msg.log.map((l,i) => <div key={i}>{l}</div>)}
+                    </div>
+                  ) : msg.role==="assistant" ? renderMd(msg.content) : <p style={{margin:0,fontSize:13,color:"var(--color-text-primary)",lineHeight:1.65}}>{msg.content}</p>}
                 </div>
               </div>
             ))}
@@ -887,7 +935,7 @@ export default function App() {
             <div ref={bottomRef}/>
           </div>
 
-          {messages.length <= 2 && profile && (
+          {!aiLoading && profile && messages.length > 0 && messages[messages.length - 1].role === "assistant" && (
             <div style={{padding:"0 20px 12px",display:"flex",flexWrap:"wrap",gap:6}}>
               {QUICK_ACTIONS.map((a,i) => (
                 <button key={i} onClick={() => sendMessage(a.prompt)} style={{fontSize:11,padding:"5px 12px",borderRadius:20,border:"1px solid var(--color-border-secondary)",background:"var(--color-background-secondary)",color:"var(--color-text-secondary)",cursor:"pointer",transition:"border-color 0.15s,color 0.15s"}}>{a.label}</button>
@@ -903,7 +951,7 @@ export default function App() {
                 onKeyDown={handleKey}
                 placeholder="Ask about your commute…"
                 rows={1}
-                style={{flex:1,resize:"none",padding:"10px 14px",borderRadius:14,border:"1px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",fontSize:13,fontFamily:"var(--font-sans)",lineHeight:1.5,outline:"none",minHeight:40,maxHeight:100,overflowY:"auto",transition:"border-color 0.15s"}}
+                style={{flex:1,resize:"none",padding:"10px 14px",borderRadius:14,border:"2px solid var(--color-border-primary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",fontSize:13,fontFamily:"var(--font-sans)",lineHeight:1.5,outline:"none",minHeight:40,maxHeight:100,overflowY:"auto",transition:"border-color 0.15s"}}
                 onInput={e => { e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,100)+"px"; }}
               />
               <button

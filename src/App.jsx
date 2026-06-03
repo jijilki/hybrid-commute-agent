@@ -330,6 +330,19 @@ export default function App() {
   const saveWeather  = async (w) => { setWeather(w);  try { localStorage.setItem(WEATHER_KEY,  JSON.stringify(w)); } catch(e) {} };
   const saveHolidays = async (d) => { setHolidays(d); try { localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(d)); } catch(e) {} };
 
+  const confirmHoliday = (date, value) => {
+    setHolidays(prev => {
+      const updated = prev.map(h => h.date === date ? { ...h, confirmed: value } : h);
+      try { localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(updated)); } catch(e) {}
+      return updated;
+    });
+    setMessages(msgs => msgs.map(m =>
+      m.type === "holiday-confirm"
+        ? { ...m, holidays: m.holidays.map(h => h.date === date ? { ...h, confirmed: value } : h) }
+        : m
+    ));
+  };
+
   // ── Collect traffic + weather + holidays ──────────────────────────────
   const runCollection = async (append, updateLast) => {
     if (!GOOGLE_API_KEY) { append("⚠️ No Google API key configured."); return; }
@@ -389,17 +402,20 @@ export default function App() {
       updateLast(`⚠️ Weather: ${e.message}`);
     }
 
+    let fetchedHolidays = [];
     try {
       const cc = profile.countryCode || "US";
       append(`📅 Fetching public holidays for ${cc} (Google Calendar)…`);
       const hols = await fetchHolidays(GOOGLE_API_KEY, cc);
-      await saveHolidays(hols);
+      const existingMap = Object.fromEntries(holidays.map(h => [h.date, h.confirmed]));
+      fetchedHolidays = hols.map(h => ({ ...h, confirmed: existingMap[h.date] }));
+      await saveHolidays(fetchedHolidays);
       updateLast(`✅ Holidays: ${hols.length} upcoming events found`);
     } catch(e) {
       updateLast(`⚠️ Holidays: ${e.message}`);
     }
 
-    return collected;
+    return { collected, fetchedHolidays };
   };
 
   const collectNow = async () => {
@@ -428,12 +444,18 @@ export default function App() {
     const updateLastChat = line => setMessages(msgs => msgs.map(m =>
       m.type === "collect-progress" ? { ...m, log:[...m.log.slice(0,-1), line] } : m
     ));
-    const collected = await runCollection(appendChat, updateLastChat);
-    setMessages(msgs => msgs.map(m =>
-      m.type === "collect-progress"
-        ? { role:"assistant", type:null, content:`🎉 **All done!** Collected ${collected ?? 0} traffic readings plus weather & holidays.\n\nAsk me for commute recommendations whenever you're ready!` }
-        : m
-    ));
+    const { collected = 0, fetchedHolidays = [] } = await runCollection(appendChat, updateLastChat) || {};
+    setMessages(msgs => {
+      const updated = msgs.map(m =>
+        m.type === "collect-progress"
+          ? { role:"assistant", content:`🎉 **All done!** Collected ${collected} traffic readings plus weather & holidays.\n\nAsk me for commute recommendations whenever you're ready!` }
+          : m
+      );
+      if (fetchedHolidays.length > 0) {
+        return [...updated, { role:"assistant", type:"holiday-confirm", holidays: fetchedHolidays }];
+      }
+      return updated;
+    });
     setCollecting(false);
   };
 
@@ -452,7 +474,7 @@ export default function App() {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 1024,
-          system: buildSystemPrompt(profile, history, weather, holidays),
+          system: buildSystemPrompt(profile, history, weather, holidays.filter(h => h.confirmed !== false)),
           messages: next.map(m => ({ role:m.role, content:m.content })),
         }),
       });
@@ -506,7 +528,8 @@ export default function App() {
       try {
         setSetupLog(l => [...l, `📅 Fetching public holidays for ${countryCode}…`]);
         const hols = await fetchHolidays(GOOGLE_API_KEY, countryCode);
-        await saveHolidays(hols);
+        const existingMap = Object.fromEntries(holidays.map(h => [h.date, h.confirmed]));
+        await saveHolidays(hols.map(h => ({ ...h, confirmed: existingMap[h.date] })));
         setSetupLog(l => [...l, `✅ Holidays: ${hols.length} upcoming events found`]);
       } catch(e) {
         setSetupLog(l => [...l, `⚠️ Holidays: ${e.message}`]);
@@ -631,13 +654,18 @@ export default function App() {
                 const dayLong = d.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" });
                 const daysAway = Math.ceil((d - new Date()) / 86400000);
                 return (
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:8,padding:"8px 12px"}}>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:500,color:"var(--color-text-primary)"}}>{h.name}</div>
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"var(--color-background-secondary)",border:`0.5px solid ${h.confirmed===false?"var(--color-border-tertiary)":"var(--color-border-tertiary)"}`,borderRadius:8,padding:"8px 12px",opacity:h.confirmed===false?0.5:1}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:500,color:"var(--color-text-primary)",display:"flex",alignItems:"center",gap:6}}>
+                        {h.name}
+                        {h.confirmed===false && <span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:"rgba(107,119,153,0.15)",color:"var(--color-text-tertiary)"}}>skipped</span>}
+                      </div>
                       <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>{dayLong}{daysAway > 0 ? ` · in ${daysAway} day${daysAway!==1?"s":""}` : " · today"}</div>
                     </div>
-                    <div style={{fontSize:11,padding:"3px 9px",borderRadius:6,background:"#dc262611",color:"#dc2626",border:"0.5px solid #dc262644",fontWeight:500,flexShrink:0}}>
-                      🚫 No commute
+                    <div style={{display:"flex",gap:5,flexShrink:0,alignItems:"center"}}>
+                      {h.confirmed!==false && <div style={{fontSize:11,padding:"3px 9px",borderRadius:6,background:"#dc262611",color:"#dc2626",border:"0.5px solid #dc262644",fontWeight:500}}>🚫 No commute</div>}
+                      <button onClick={() => confirmHoliday(h.date, true)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:`1px solid ${h.confirmed===true?"#22c55e":"var(--color-border-secondary)"}`,background:h.confirmed===true?"rgba(34,197,94,0.15)":"transparent",color:h.confirmed===true?"#22c55e":"var(--color-text-secondary)",cursor:"pointer"}}>✓</button>
+                      <button onClick={() => confirmHoliday(h.date, false)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:`1px solid ${h.confirmed===false?"#ef4444":"var(--color-border-secondary)"}`,background:h.confirmed===false?"rgba(239,68,68,0.15)":"transparent",color:h.confirmed===false?"#ef4444":"var(--color-text-secondary)",cursor:"pointer"}}>✗</button>
                     </div>
                   </div>
                 );
@@ -900,7 +928,30 @@ export default function App() {
                     ? "1px solid rgba(99,102,241,0.3)"
                     : "1px solid var(--color-border-secondary)",
                 }}>
-                  {msg.type==="collect-prompt" ? (
+                  {msg.type==="holiday-confirm" ? (
+                    <div>
+                      <p style={{margin:"0 0 10px",fontSize:13,color:"var(--color-text-primary)",lineHeight:1.65}}>
+                        📅 Found {msg.holidays.length} public holiday{msg.holidays.length!==1?"s":""}. Confirm which apply to your location — skipped ones won't affect recommendations:
+                      </p>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {msg.holidays.map(h => {
+                          const label = new Date(h.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+                          return (
+                            <div key={h.date} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                              <div>
+                                <div style={{fontSize:12,fontWeight:500,color:"var(--color-text-primary)"}}>{h.name}</div>
+                                <div style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{label}</div>
+                              </div>
+                              <div style={{display:"flex",gap:5,flexShrink:0}}>
+                                <button onClick={() => confirmHoliday(h.date, true)} style={{fontSize:11,padding:"3px 10px",borderRadius:6,border:`1px solid ${h.confirmed===true?"#22c55e":"var(--color-border-secondary)"}`,background:h.confirmed===true?"rgba(34,197,94,0.15)":"transparent",color:h.confirmed===true?"#22c55e":"var(--color-text-secondary)",cursor:"pointer",transition:"all 0.15s"}}>✓ Mine</button>
+                                <button onClick={() => confirmHoliday(h.date, false)} style={{fontSize:11,padding:"3px 10px",borderRadius:6,border:`1px solid ${h.confirmed===false?"#ef4444":"var(--color-border-secondary)"}`,background:h.confirmed===false?"rgba(239,68,68,0.15)":"transparent",color:h.confirmed===false?"#ef4444":"var(--color-text-secondary)",cursor:"pointer",transition:"all 0.15s"}}>✗ Skip</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : msg.type==="collect-prompt" ? (
                     <div>
                       <p style={{margin:"0 0 10px",fontSize:13,color:"var(--color-text-primary)",lineHeight:1.65}}>
                         📊 No traffic data yet for <strong>{profile?.originName}</strong> → <strong>{profile?.destName}</strong>.<br/>

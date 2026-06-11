@@ -468,6 +468,16 @@ export default function App() {
     setMessages(next);
     setAiLoading(true);
     try {
+      // Only send real text turns — UI-only cards (collect-prompt,
+      // collect-progress, holiday-confirm) have no `content` and would
+      // otherwise produce a message missing the required `content` field.
+      // The API also requires the conversation to start with a user turn,
+      // so drop any leading assistant messages (e.g. the welcome greeting).
+      const apiMessages = next
+        .filter(m => typeof m.content === "string" && m.content.length > 0)
+        .map(m => ({ role:m.role, content:m.content }));
+      while (apiMessages.length && apiMessages[0].role !== "user") apiMessages.shift();
+
       const res = await fetch("/anthropic/v1/messages", {
         method: "POST",
         headers: { "Content-Type":"application/json" },
@@ -475,7 +485,7 @@ export default function App() {
           model: "claude-sonnet-4-6",
           max_tokens: 1024,
           system: buildSystemPrompt(profile, history, weather, holidays.filter(h => h.confirmed !== false)),
-          messages: next.map(m => ({ role:m.role, content:m.content })),
+          messages: apiMessages,
         }),
       });
       const data = await res.json();
